@@ -49,7 +49,7 @@
   .summary :global(p) {
     font-size: 1.6rem;
     line-height: 2.4rem;
-    margin-bottom: 1rem;
+    margin-bottom: 2rem;
   }
 
   .summary :global(li) {
@@ -114,72 +114,44 @@
   async function summarizeTranscript() {
     isLoading = true;
     try {
-      // Estimate video length based on last timestamp in transcript
-      const lastTimestamp = subtitles.match(/\[(\d{2}:\d{2})\]/g)?.pop() || '[00:00]';
-      const minutes = timeToSeconds(lastTimestamp.slice(1, -1)) / 60;
-      
-      // Calculate recommended number of points (1 point per ~3-4 minutes, with min 4 and max 8)
-      const recommendedPoints = Math.min(Math.max(Math.round(minutes / 3.5), 4), 8);
-
       const completion = await openai.chat.completions.create({
         model: "gpt-4-1106-preview",
         messages: [
           {
             role: "system",
-            content: `You are a helpful assistant that creates clear, concise video summaries. For this ${Math.round(minutes)}-minute video, focus on identifying ${recommendedPoints} key moments or topics, providing informative but concise explanations for each. Each point should be substantial enough to be meaningful but brief enough to be quickly understood.`
+            content: "You are a helpful assistant that creates concise, informative summaries of video transcripts with timestamps. Focus on the main topics and key points."
           },
           {
             role: "user",
-            content: `Analyze this YouTube video transcript and create a detailed summary with the following structure:
+            content: `Extract the key information from the provided transcript of a YouTube video. Your task is to provide a concise summary and the key points as a single block of text. Format your response as follows:
 
-1. Start with a concise overview paragraph (2 sentences) that captures the main theme and purpose of the video.
-
-2. Follow with "Key Moments:" containing approximately ${recommendedPoints} points. For each point:
-   - Begin with a timestamp
-   - Provide 1-2 clear, informative sentences that explain the key concept or discussion
-   - Focus on specific details rather than general statements
-   - Keep each point focused on a single main idea
-
-Format as:
-"<Overview paragraph>
-
-Key Moments:
-[timestamp] <Clear explanation of key point 1>
-[timestamp] <Clear explanation of key point 2>
-..."
+"<Summary of the video content>. Key points include: [timestamp] <Key point 1>, [timestamp] <Key point 2>, ..."
 
 Transcript:
 ${subtitles}
 
-Return only the formatted output, with no additional explanations.`
+Return only the output as a single block of text, with no additional formatting or explanations.`
           }
         ]
       });
       
       // Format the response
       const rawSummary = completion.choices[0].message.content;
+      const [mainParagraph, points] = rawSummary.split('Key points include:');
       
-      // Check if the summary contains "Key Moments:" before splitting
-      if (rawSummary.includes('Key Moments:')) {
-        const [mainParagraph, points] = rawSummary.split('Key Moments:');
-        
-        // Create timestamps with onclick handlers instead of links
-        const formattedPoints = points
-          .split(/\[(\d{2}:\d{2})\]/)
-          .filter(Boolean)
-          .reduce((acc, curr, i, arr) => {
-            if (i % 2 === 0) return acc;
-            const timestamp = curr;
-            const seconds = timeToSeconds(timestamp);
-            const text = arr[i + 1].trim();
-            return acc + `- <a href="#" data-time="${seconds}" class="timestamp-link">${timestamp}</a>${text}\n`;
-          }, '');
+      // Create timestamps with onclick handlers instead of links
+      const formattedPoints = points
+        .split(/\[(\d{2}:\d{2})\]/)
+        .filter(Boolean)
+        .reduce((acc, curr, i, arr) => {
+          if (i % 2 === 0) return acc;
+          const timestamp = curr;
+          const seconds = timeToSeconds(timestamp);
+          const text = arr[i + 1].trim();
+          return acc + `- <a href="#" data-time="${seconds}" class="timestamp-link">${timestamp}</a>${text}\n`;
+        }, '');
 
-        summary = `${mainParagraph.trim()}\n\nKey Moments:\n${formattedPoints}`;
-      } else {
-        // If the response doesn't contain "Key Moments:", just use it as is
-        summary = rawSummary;
-      }
+      summary = `${mainParagraph.trim()}\n\n${formattedPoints}`;
     } catch (err) {
       error = err.message;
     } finally {
@@ -229,17 +201,23 @@ Return only the formatted output, with no additional explanations.`
       tabId = response.tabId;
       
       // Initial load
-      currentVideoId = getVideoId();
       await loadSubtitles();
 
-      // Listen for navigation events
-      document.addEventListener('youtube-navigation', async () => {
-        console.log('Navigation event received');
-        currentVideoId = getVideoId();
-        summary = ''; // Clear previous summary
-        subtitles = ''; // Clear previous subtitles
-        hasSubtitles = false; // Reset subtitles flag
-        await loadSubtitles(); // Load new subtitles
+      // Listen for URL changes
+      const observer = new MutationObserver(async (mutations) => {
+        const newVideoId = getVideoId();
+        if (newVideoId && newVideoId !== currentVideoId) {
+          currentVideoId = newVideoId;
+          summary = ''; // Clear previous summary
+          await loadSubtitles();
+        }
+      });
+
+      // Watch for changes in the URL
+      observer.observe(document.querySelector('title'), {
+        subtree: true,
+        characterData: true,
+        childList: true
       });
 
       // Add click handlers to all timestamp links
@@ -250,18 +228,19 @@ Return only the formatted output, with no additional explanations.`
         }
       });
     });
+
+    return () => {
+      if (observer) observer.disconnect();
+    };
   });
 
   // Separate subtitles loading logic
   async function loadSubtitles() {
     try {
-      console.log('Loading subtitles for video:', getVideoId());
       subtitles = await extractSubtitles();
       hasSubtitles = subtitles.length > 0;
       error = null;
-      console.log('Loaded subtitles:', subtitles.substring(0, 100) + '...');
     } catch (err) {
-      console.error('Error loading subtitles:', err);
       error = err.message;
       hasSubtitles = false;
       subtitles = '';
@@ -273,7 +252,6 @@ Return only the formatted output, with no additional explanations.`
     try {
       console.log('Fetching subtitles for current video');
 
-      // Get fresh page data each time
       const videoPageData = document.documentElement.innerHTML;
       if (!videoPageData.includes('captionTracks')) {
         throw new Error('Could not find captions for this video');
@@ -288,9 +266,7 @@ Return only the formatted output, with no additional explanations.`
         throw new Error('Could not find English captions for this video');
       }
 
-      // Add cache-busting parameter to URL
-      const cacheBustUrl = `${subtitleTrack.baseUrl}&_t=${Date.now()}`;
-      const response = await fetch(cacheBustUrl);
+      const response = await fetch(subtitleTrack.baseUrl);
       const transcript = await response.text();
 
       const formatTime = (seconds) => {
@@ -324,7 +300,7 @@ Return only the formatted output, with no additional explanations.`
         .replace(/\s+/g, ' ')
         .trim();
 
-      console.log('Formatted transcript:', formattedTranscript.substring(0, 100) + '...');
+      console.log('Formatted transcript:', formattedTranscript);
       return formattedTranscript;
     } catch (error) {
       console.error('Error fetching subtitles:', error);
