@@ -94,6 +94,7 @@
   import he from 'he';
   import OpenAI from 'openai';
   import { marked } from 'marked';
+  import { OPENAI_API_KEY } from '../config.js';
 
   let error = null;
   let hasSubtitles = false;
@@ -105,8 +106,8 @@
 
   // Add OpenAI client initialization
   const openai = new OpenAI({
-    apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-    dangerouslyAllowBrowser: true // Only for demo purposes
+    apiKey: OPENAI_API_KEY,
+    dangerouslyAllowBrowser: true
   });
 
   // Add summarize function

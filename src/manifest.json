@@ -1,7 +1,7 @@
 {
-  "name": "chrome-extension-svelte-bolierplate",
-  "version": "0.0.1",
-  "description": "A boilerplate for chrome extension with svelte",
+  "name": "Inkling",
+  "version": "1.0.0",
+  "description": "Summarize YouTube videos",
   "manifest_version": 3,
   "icons": {
     "16": "./assets/icons/icon16.png",
